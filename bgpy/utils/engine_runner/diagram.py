@@ -16,8 +16,15 @@ if TYPE_CHECKING:
 class Diagram:
     """Creates a diagram of an AS graph with traceback"""
 
+    # Edges whose endpoints span more than this many ranks are treated as
+    # "long" cross-rank edges and drawn with constraint=false + curved routing.
+    LONG_EDGE_RANK_THRESHOLD: int = 1
+
     def __init__(self) -> None:
         self.dot: Digraph = Digraph(format="png")
+        # Use curved splines so long cross-rank edges arc around the hierarchy
+        # instead of cutting straight through it and distorting the layout.
+        self.dot.attr(splines="curved")
         # purple is cooler but I guess that's not paper worthy
         # self.dot.attr(bgcolor='purple:pink')
 
@@ -38,7 +45,7 @@ class Diagram:
         self._add_legend(traceback, scenario)
         display_next_hop_asn = self._display_next_hop_asn(engine, scenario)
         self._add_ases(engine, traceback, scenario, display_next_hop_asn)
-        self._add_edges(engine)
+        self._add_edges(engine, diagram_ranks)
         self._add_diagram_ranks(diagram_ranks, static_order)
         self._add_description(description, display_next_hop_asn)
         self._render(path=path, view=view, dpi=dpi)
@@ -246,15 +253,62 @@ class Diagram:
                 kwargs["shape"] = "octagon"
         return kwargs
 
-    def _add_edges(self, engine: BaseSimulationEngine):
-        # Then add all connections to the graph
-        # Starting with provider to customer
+    def _build_asn_rank_map(
+        self, diagram_ranks: tuple[tuple["AS", ...], ...]
+    ) -> dict[int, int]:
+        """Returns {asn: rank_index} from the ordered diagram ranks."""
+        return {
+            as_obj.asn: rank_idx
+            for rank_idx, rank in enumerate(diagram_ranks)
+            for as_obj in rank
+        }
+
+    def _is_long_edge(
+        self, src_asn: int, dst_asn: int, asn_to_rank: dict[int, int]
+    ) -> bool:
+        """True when the edge spans more ranks than LONG_EDGE_RANK_THRESHOLD."""
+        src_rank = asn_to_rank.get(src_asn)
+        dst_rank = asn_to_rank.get(dst_asn)
+        if src_rank is None or dst_rank is None:
+            return False
+        return abs(dst_rank - src_rank) > self.LONG_EDGE_RANK_THRESHOLD
+
+    def _add_edges(
+        self,
+        engine: BaseSimulationEngine,
+        diagram_ranks: tuple[tuple["AS", ...], ...],
+    ) -> None:
+        """Add edges to the graph, routing long cross-rank edges as curved arcs.
+
+        Normal adjacent-rank edges are drawn straight as before.  Edges whose
+        endpoints are separated by more than LONG_EDGE_RANK_THRESHOLD ranks are
+        drawn with:
+          - constraint=false  → Graphviz dot does not re-rank nodes to satisfy
+                                 the edge, preserving the intended hierarchy.
+          - curved splines    → the edge arcs around the hierarchy instead of
+                                 cutting through it, reducing visual clutter.
+          - distinct styling  → blue colour + increased pen width make long
+                                 edges easy to identify at a glance.
+        """
+        asn_to_rank = self._build_asn_rank_map(diagram_ranks)
+
         for as_obj in engine.as_graph:
-            # Add provider customer edges
+            # Provider → customer edges
             for customer_obj in as_obj.customers:
-                self.dot.edge(str(as_obj.asn), str(customer_obj.asn))
-            # Add peer edges
-            # Only add if the largest asn is the curren as_obj to avoid dups
+                if self._is_long_edge(as_obj.asn, customer_obj.asn, asn_to_rank):
+                    self.dot.edge(
+                        str(as_obj.asn),
+                        str(customer_obj.asn),
+                        constraint="false",
+                        color="#1f78b4",
+                        penwidth="2.0",
+                        style="dashed",
+                        tooltip=f"long cross-rank: AS{as_obj.asn}→AS{customer_obj.asn}",
+                    )
+                else:
+                    self.dot.edge(str(as_obj.asn), str(customer_obj.asn))
+
+            # Peer edges — deduplicated by only adding when src asn > peer asn
             for peer_obj in as_obj.peers:
                 if as_obj.asn > peer_obj.asn:
                     self.dot.edge(
