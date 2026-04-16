@@ -17,14 +17,11 @@ class Diagram:
     """Creates a diagram of an AS graph with traceback"""
 
     # Edges whose endpoints span more than this many ranks are treated as
-    # "long" cross-rank edges and drawn with constraint=false + curved routing.
+    # "long" cross-rank edges and drawn with constraint=false + blue dotted style.
     LONG_EDGE_RANK_THRESHOLD: int = 1
 
     def __init__(self) -> None:
         self.dot: Digraph = Digraph(format="png")
-        # Use curved splines so long cross-rank edges arc around the hierarchy
-        # instead of cutting straight through it and distorting the layout.
-        self.dot.attr(splines="curved")
         # purple is cooler but I guess that's not paper worthy
         # self.dot.attr(bgcolor='purple:pink')
 
@@ -80,6 +77,12 @@ class Diagram:
                 <TD>{disconnect_count}</TD>
               </TR>
         """
+
+        html += """
+              <TR>
+                <TD COLSPAN="2" BORDER="0">&#x2508;&#x2508; blue dotted = long cross-rank provider&#x2192;customer edge</TD>
+              </TR>
+              """
 
         # ROAs takes up the least space right underneath the legend
         # which is why we have this here instead of a separate node
@@ -278,17 +281,15 @@ class Diagram:
         engine: BaseSimulationEngine,
         diagram_ranks: tuple[tuple["AS", ...], ...],
     ) -> None:
-        """Add edges to the graph, routing long cross-rank edges as curved arcs.
+        """Add edges to the graph, routing long cross-rank edges without distorting layout.
 
-        Normal adjacent-rank edges are drawn straight as before.  Edges whose
-        endpoints are separated by more than LONG_EDGE_RANK_THRESHOLD ranks are
-        drawn with:
+        Normal adjacent-rank edges are drawn as before.  Edges whose endpoints
+        are separated by more than LONG_EDGE_RANK_THRESHOLD ranks are drawn with:
           - constraint=false  → Graphviz dot does not re-rank nodes to satisfy
                                  the edge, preserving the intended hierarchy.
-          - curved splines    → the edge arcs around the hierarchy instead of
-                                 cutting through it, reducing visual clutter.
-          - distinct styling  → blue colour + increased pen width make long
-                                 edges easy to identify at a glance.
+          - blue dotted style → visually distinct from both normal
+                                 provider→customer edges (solid) and peer edges
+                                 (dashed), so the edge type is unambiguous.
         """
         asn_to_rank = self._build_asn_rank_map(diagram_ranks)
 
@@ -302,8 +303,7 @@ class Diagram:
                         constraint="false",
                         color="#1f78b4",
                         penwidth="2.0",
-                        style="dashed",
-                        tooltip=f"long cross-rank: AS{as_obj.asn}→AS{customer_obj.asn}",
+                        style="dotted",
                     )
                 else:
                     self.dot.edge(str(as_obj.asn), str(customer_obj.asn))
