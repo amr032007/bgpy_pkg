@@ -38,7 +38,7 @@ class Diagram:
         self._add_legend(traceback, scenario)
         display_next_hop_asn = self._display_next_hop_asn(engine, scenario)
         self._add_ases(engine, traceback, scenario, display_next_hop_asn)
-        self._add_edges(engine)
+        self._add_edges(engine, diagram_ranks)
         self._add_diagram_ranks(diagram_ranks, static_order)
         self._add_description(description, display_next_hop_asn)
         self._render(path=path, view=view, dpi=dpi)
@@ -246,13 +246,36 @@ class Diagram:
                 kwargs["shape"] = "octagon"
         return kwargs
 
-    def _add_edges(self, engine: BaseSimulationEngine):
-        # Then add all connections to the graph
-        # Starting with provider to customer
+    def _add_edges(
+        self,
+        engine: BaseSimulationEngine,
+        diagram_ranks: tuple[tuple["AS", ...], ...],
+    ) -> None:
+        asn_to_rank: dict[int, int] = {
+            as_obj.asn: rank_idx
+            for rank_idx, rank in enumerate(diagram_ranks)
+            for as_obj in rank
+        }
+
         for as_obj in engine.as_graph:
             # Add provider customer edges
             for customer_obj in as_obj.customers:
-                self.dot.edge(str(as_obj.asn), str(customer_obj.asn))
+                provider_rank = asn_to_rank.get(as_obj.asn)
+                customer_rank = asn_to_rank.get(customer_obj.asn)
+                # If provider is on a lower row than its customer, the edge goes
+                # upward and will collapse the layout — free it from rank constraints
+                if (
+                    provider_rank is not None
+                    and customer_rank is not None
+                    and provider_rank > customer_rank
+                ):
+                    self.dot.edge(
+                        str(as_obj.asn),
+                        str(customer_obj.asn),
+                        constraint="false",
+                    )
+                else:
+                    self.dot.edge(str(as_obj.asn), str(customer_obj.asn))
             # Add peer edges
             # Only add if the largest asn is the curren as_obj to avoid dups
             for peer_obj in as_obj.peers:

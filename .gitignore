@@ -1,5 +1,9 @@
 .ruff_cache/
 
+# Local diagram test script and its output
+test_diagram.py
+engine_runs/
+
 # Test generates these automatically
 *guess.csv
 *guess.pickle
